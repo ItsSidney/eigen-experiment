@@ -1,0 +1,14 @@
+# Basis manifest: record kernel identity at boot.
+[service]
+name = "system/identity"
+description = "Log kernel name and version"
+type = "oneshot"
+command = "/bin/busybox uname -a"
+require-online = ["logging/basis-log"]
+milestone = "filesystems"
+restart = "on-failure"
+retry-budget = 3
+retry-window = 60
+backoff-base = 1
+backoff-mult = 2
+backoff-cap = 10

@@ -1,0 +1,13 @@
+# Basis manifest: per-service log directory setup.
+[service]
+name = "logging/basis-log"
+description = "Prepare the per-service log directory"
+type = "oneshot"
+command = "/bin/busybox mkdir -p /tmp/basis/log"
+milestone = "single-user"
+restart = "on-failure"
+retry-budget = 3
+retry-window = 60
+backoff-base = 1
+backoff-mult = 2
+backoff-cap = 10

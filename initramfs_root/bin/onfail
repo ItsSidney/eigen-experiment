@@ -1,0 +1,21 @@
+#!/bin/sh
+# onfail -- cmd [args...]
+# Run cmd; if it exits nonzero (a minor, recoverable error), open the
+# Eigen diagnostic console with the failure as the reason so the
+# operator lands on live state instead of a bare prompt.
+# Hook it into basis manifests or scripts around fallible steps:
+#   onfail -- mount /data
+#   onfail -- udhcpc -i eth0
+if [ "$1" = "--" ]; then shift; fi
+if [ $# -eq 0 ]; then
+    echo "usage: onfail -- cmd [args...]" >&2
+    exit 2
+fi
+"$@"
+rc=$?
+if [ $rc -ne 0 ]; then
+    echo "[onfail] exit $rc: $* -- opening diagnostic console" >&2
+    eigen-recovery --reason "exit $rc: $1"
+    rc=$?
+fi
+exit $rc

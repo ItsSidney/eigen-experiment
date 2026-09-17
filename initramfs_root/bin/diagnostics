@@ -1,0 +1,63 @@
+#!/bin/sh
+# diagnostics - whiptail-driven recovery and diagnostics menu for Eigen OS
+# Requires: /bin/whiptail (static), terminfo for TERM=linux at /etc/terminfo
+
+TERMINFO=/etc/terminfo
+export TERMINFO
+
+# Where the kernel exposes diagnostics (procfs); tolerate missing tools.
+run_show() {
+    # $@ = command to try; runs it through whiptail --textbox-style msgbox
+    OUT=$("$@" 2>/dev/null </dev/null) || OUT="(unavailable: $1)"
+    whiptail --title "$TITLE" --scrolltext --msgbox "$OUT" 22 72 3>&1 1>&2 2>&3
+}
+
+while :; do
+    CHOICE=$(whiptail --title "Eigen Recovery & Diagnostics" \
+        --menu "Select a diagnostic:" 20 64 9 \
+        "dmesg"    "Kernel message ring buffer" \
+        "memory"   "Memory map and usage" \
+        "ps"       "Process list" \
+        "net"      "Network interfaces and IP config" \
+        "disk"     "Filesystem tree (/, mounts)" \
+        "modules"  "Kernel modules / drivers present" \
+        "hexdump"  "Hex dump a file" \
+        "shell"    "Drop to a minimal recovery shell" \
+        "reboot"   "Reboot the machine" \
+        3>&1 1>&2 2>&3) || break
+
+    case "$CHOICE" in
+        dmesg)
+            TITLE="dmesg" run_show dmesg
+            ;;
+        memory)
+            TITLE="memory" run_show free
+            ;;
+        ps)
+            TITLE="processes" run_show ps
+            ;;
+        net)
+            TITLE="network" run_show ifconfig
+            ;;
+        disk)
+            TITLE="filesystem" run_show ls
+            ;;
+        modules)
+            TITLE="modules" run_show lsmod
+            ;;
+        hexdump)
+            FILE=$(whiptail --title "hexdump" --inputbox "File to dump:" 10 60 \
+                "/bin/whiptail" 3>&1 1>&2 2>&3) || continue
+            TITLE="hexdump: $FILE" run_show hexdump -C "$FILE"
+            ;;
+        shell)
+            echo "[diagnostics] type 'exit' to return to the menu"
+            sh || true
+            ;;
+        reboot)
+            whiptail --title "reboot" --yesno "Reboot now?" 8 40 \
+                3>&1 1>&2 2>&3 && { reboot; break; }
+            ;;
+    esac
+done
+exit 0

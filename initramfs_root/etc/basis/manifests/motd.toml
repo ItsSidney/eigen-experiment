@@ -1,0 +1,14 @@
+# Basis manifest: boot banner for the console.
+[service]
+name = "multi-user/motd"
+description = "Print the multi-user sign-on banner"
+type = "oneshot"
+command = "/bin/busybox echo Eigen multi-user ready"
+require-online = ["system/identity"]
+milestone = "multi-user"
+restart = "never"
+retry-budget = 1
+retry-window = 60
+backoff-base = 1
+backoff-mult = 2
+backoff-cap = 5

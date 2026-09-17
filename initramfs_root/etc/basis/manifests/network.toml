@@ -1,0 +1,14 @@
+# Basis manifest: verify the gateway answers before multi-user.
+[service]
+name = "network/gateway-check"
+description = "Ping the gateway once to confirm the link is up"
+type = "oneshot"
+command = "/bin/busybox ping -c 1 10.0.2.2"
+require-online = ["system/identity"]
+milestone = "network"
+restart = "on-failure"
+retry-budget = 3
+retry-window = 60
+backoff-base = 2
+backoff-mult = 2
+backoff-cap = 10

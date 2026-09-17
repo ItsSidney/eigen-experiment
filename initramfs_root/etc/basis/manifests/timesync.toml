@@ -1,0 +1,16 @@
+# Basis manifest: discipline the wall clock from NTP once the network
+# is up. Runs after identity (needs nothing but the stack itself); DNS
+# resolves the pool, and a failure parks here without blocking boot.
+[service]
+name = "network/timesync"
+description = "Set the system clock from NTP"
+type = "oneshot"
+command = "/usr/basisd/bin/basis-ntpsync"
+require-online = ["system/identity"]
+milestone = "network"
+restart = "on-failure"
+retry-budget = 2
+retry-window = 60
+backoff-base = 2
+backoff-mult = 2
+backoff-cap = 8

@@ -1,0 +1,16 @@
+# Basis manifest: example daemon service.
+# Daemons park in offline until Eigen grows a preemptive scheduler;
+# oneshots above are fully supervised today.
+[service]
+name = "multi-user/crond"
+description = "Example daemon (parked: needs scheduler)"
+type = "daemon"
+command = "/bin/busybox crond -f"
+require-online = ["network/gateway-check"]
+milestone = "multi-user"
+restart = "on-failure"
+retry-budget = 5
+retry-window = 60
+backoff-base = 1
+backoff-mult = 2
+backoff-cap = 30

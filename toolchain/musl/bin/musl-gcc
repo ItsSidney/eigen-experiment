@@ -1,0 +1,2 @@
+#!/bin/sh
+exec "${REALGCC:-gcc}" "$@" -specs "/home/larping-c/eigen-experimental/toolchain/musl/lib/musl-gcc.specs"
