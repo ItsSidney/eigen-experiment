@@ -57,3 +57,8 @@ initramfs_root/bin/dummy_test
 *.log
 .nohup
 nohup.out
+
+# ── third-party build trees (sources ARE tracked) ────────────────────────
+third_party/libffi/x86_64-pc-linux-musl/
+third_party/libwayland/build/
+third_party/libwayland/libwayland.a
