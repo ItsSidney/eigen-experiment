@@ -38,6 +38,7 @@
 #include "proc/process.h"
 #include "proc/vdso.h"
 #include "acpi/acpi.h"
+#include "drivers/sound/sound.h"
 
 /* Tell Limine what we need at boot by placing requests in a special section. */
 static volatile struct limine_framebuffer_request fb_req = {
@@ -255,6 +256,9 @@ void kmain(void) {
     /* Step 6: Initialize Network Drivers (e1000 or AMD PCnet) */
     e1000_init();
     pcnet_init();
+
+    /* Step 6b: Initialize Sound Subsystem (AC97 / DAC97) */
+    sound_init();
 
     /* Step 7: Initialize Timer and PS/2 Keyboard + Mouse */
     pit_init(100);
