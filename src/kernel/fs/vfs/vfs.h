@@ -105,6 +105,8 @@ struct vfs_node {
     int (*unlink)(struct vfs_node *parent, const char *name);
     int (*rmdir)(struct vfs_node *parent, const char *name);
     int (*truncate)(struct vfs_node *node, int64_t length);
+    int (*ioctl)(struct vfs_node *node, unsigned long cmd, void *arg);
+    int (*poll)(struct vfs_node *node, int events);
 
     /* Optional mmap hook for device nodes (fb0, mem). NULL means "not
      * mappable": the VFS routes that fd to the anonymous path. */
@@ -151,6 +153,8 @@ int vfs_install_node(struct vfs_node *node);
  * read is in flight. Device read ops that must honour O_NONBLOCK consult
  * this, since the op itself only receives (node, offset, size, buf). */
 int vfs_read_flags(void);
+int vfs_write_flags(void);
+struct vfs_node *vfs_get_node(int fd);
 
 /* Publish an externally-owned device node into /dev. The table entry is the
  * live node userspace reaches through path lookups, so drivers keep the
@@ -176,6 +180,22 @@ int vfs_stat(const char *path, struct vfs_stat *st);
 int vfs_lstat(const char *path, struct vfs_stat *st);
 int64_t vfs_readlink(const char *path, char *buf, size_t size);
 int vfs_fstat(int fd, struct vfs_stat *st);
+struct vfs_statfs {
+    int64_t f_type;
+    int64_t f_bsize;
+    int64_t f_blocks;
+    int64_t f_bfree;
+    int64_t f_bavail;
+    int64_t f_files;
+    int64_t f_ffree;
+    int32_t f_fsid[2];
+    int64_t f_namelen;
+    int64_t f_frsize;
+    int64_t f_flags;
+    int64_t f_spare[4];
+};
+int vfs_statfs(const char *path, struct vfs_statfs *st);
+int vfs_fstatfs(int fd, struct vfs_statfs *st);
 int64_t vfs_getdents64(int fd, void *dirp, size_t count);
 int vfs_dup(int oldfd);
 int vfs_dup2(int oldfd, int newfd);

@@ -88,15 +88,6 @@ void ipv4_handle_packet(const uint8_t *payload, uint16_t len) {
     uint8_t version = (ip->ver_ihl >> 4) & 0x0F;
     uint8_t ihl     = (ip->ver_ihl & 0x0F) * 4;
 
-    /* TEMP-DEBUG */
-    serial_puts("[IP4] rx src=");
-    serial_puthex(ip->src_ip);
-    serial_puts(" dst=");
-    serial_puthex(ip->dst_ip);
-    serial_puts(" proto=");
-    serial_puthex(ip->protocol);
-    serial_puts("\n");
-
     if (version != 4 || ihl < sizeof(struct ipv4_header) || ihl > len) return;
 
     uint16_t total_len = ntohs(ip->total_len);

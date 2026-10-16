@@ -129,6 +129,9 @@ struct ktimespec {
 #define SYS_READLINK        89
 #define SYS_CHMOD           90
 #define SYS_FCHMOD          91
+#define SYS_STATFS          137
+#define SYS_FSTATFS         138
+#define SYS_STATX           332
 #define SYS_CHOWN           92
 #define SYS_FCHOWN          93
 #define SYS_LCHOWN          94

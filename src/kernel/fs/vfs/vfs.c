@@ -40,6 +40,7 @@ static struct file_descriptor *cur_fds(void) {
 
 /* Status flags of the descriptor whose read op is running (see vfs_read). */
 static int g_read_flags = 0;
+static int g_write_flags = 0;
 
 /* Minimal tty line discipline (shared console): ISIG+ICANON/ECHO + VMIN/VTIME. */
 static uint32_t tty_lflag = TTY_LFLAG_ISIG | TTY_LFLAG_ICANON | TTY_LFLAG_ECHO;
@@ -821,6 +822,16 @@ int vfs_read_flags(void) {
     return g_read_flags;
 }
 
+int vfs_write_flags(void) {
+    return g_write_flags;
+}
+
+struct vfs_node *vfs_get_node(int fd) {
+    struct file_descriptor *fd_table = cur_fds();
+    if (fd < 0 || fd >= MAX_FD_COUNT || !fd_table[fd].is_used) return NULL;
+    return fd_table[fd].node;
+}
+
 int64_t vfs_write(int fd, const void *buf, size_t count) {
     struct file_descriptor *fd_table = cur_fds();
     if (fd < 0 || fd >= MAX_FD_COUNT) return -9; /* -EBADF */
@@ -842,7 +853,9 @@ int64_t vfs_write(int fd, const void *buf, size_t count) {
     }
     if (!f->node->write) return -1;
 
+    g_write_flags = f->flags;
     int64_t bytes = f->node->write(f->node, f->offset, count, buf);
+    g_write_flags = 0;
     if (bytes > 0) {
         f->offset += bytes;
     }
@@ -963,6 +976,42 @@ int vfs_fstat(int fd, struct vfs_stat *st) {
     struct vfs_node *node = fd_table[fd].node;
     if (!node) return -2; /* -ENOENT */
     populate_stat(node, st);
+    return 0;
+}
+
+static void statfs_fill(struct vfs_statfs *st) {
+    uint8_t *p = (uint8_t *)st;
+    size_t i;
+    for (i = 0; i < sizeof(struct vfs_statfs); i++) p[i] = 0;
+    /* RAM-backed filesystems: report physical memory, like tmpfs does. */
+    st->f_type    = 0x01021994; /* TMPFS_MAGIC */
+    st->f_bsize   = 512;
+    st->f_blocks  = (int64_t)(pmm_get_total_memory() / 512);
+    st->f_bfree   = (int64_t)(pmm_get_free_memory() / 512);
+    st->f_bavail  = st->f_bfree;
+    st->f_files   = 100000;
+    st->f_ffree   = 90000;
+    st->f_namelen = 255;
+    st->f_frsize  = 512;
+    st->f_flags   = 0;
+}
+
+int vfs_statfs(const char *path, struct vfs_statfs *st) {
+    struct vfs_node *node;
+    if (!st) return -14; /* -EFAULT */
+    node = vfs_lookup(path);
+    if (!node) return -2; /* -ENOENT */
+    (void)node;
+    statfs_fill(st);
+    return 0;
+}
+
+int vfs_fstatfs(int fd, struct vfs_statfs *st) {
+    struct file_descriptor *fd_table = cur_fds();
+    if (fd < 0 || fd >= MAX_FD_COUNT || !fd_table[fd].is_used) return -9;
+    if (!st) return -14;
+    /* All mounts share the same RAM-backed accounting for now. */
+    statfs_fill(st);
     return 0;
 }
 
@@ -1276,6 +1325,11 @@ int vfs_poll(int fd, int events) {    struct file_descriptor *fd_table = cur_fds
     /* Console stdin: readable only while a keystroke is waiting. */
     if (f->node->read == stdin_read) {
         return vfs_tty_poll(events);
+    }
+
+    /* Nodes with a dedicated poll hook (e.g. sound /dev/dsp) */
+    if (f->node && f->node->poll) {
+        return f->node->poll(f->node, events);
     }
 
     /* Regular files, directories, stdout/stderr: always ready. */
@@ -1639,7 +1693,7 @@ static struct vfs_node devfs_pts_dir;
 /* Externally-owned device nodes (fb0, evdev). devfs holds POINTERS rather
  * than copies so the driver's own object stays the live node: drivers that
  * route behaviour on the node pointer (evdev has two) keep working. */
-#define DEVFS_EXT_COUNT 8
+#define DEVFS_EXT_COUNT 16
 static struct vfs_node *devfs_ext[DEVFS_EXT_COUNT];
 
 int devfs_attach(struct vfs_node *node) {

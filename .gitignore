@@ -42,6 +42,7 @@ initramfs_root/dev/
 # ── vendored extracted sources (tarballs ARE tracked) ────────────────────
 tools/busybox-1.36.1/
 tools/curl-8.10.1/
+tools/fastfetch-2.43.0/
 tools/musl-1.2.5/
 tools/newt-0.52.25/
 tools/openssl-1.1.1w/

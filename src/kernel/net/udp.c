@@ -61,23 +61,6 @@ int udp_send(uint32_t dst_ip, uint16_t src_port, uint16_t dst_port, const void *
     for (uint16_t i = 0; i < len; i++) dst[i] = src[i];
 
     uint16_t total = sizeof(struct udp_header) + len;
-    /* TEMP-DEBUG */
-    serial_puts("[UDP] tx dst=");
-    serial_puthex(dst_ip);
-    serial_puts(" sport=");
-    serial_puthex(src_port);
-    serial_puts(" dport=");
-    serial_puthex(dst_port);
-    serial_puts("\n");
-    if (dst_port == 53) {
-        uint16_t k;
-        serial_puts("[UDP] dns bytes:");
-        for (k = 0; k < len && k < 48; k++) {
-            serial_puts(" ");
-            serial_puthex(((const uint8_t *)data)[k] & 0xFF);
-        }
-        serial_puts("\n");
-    }
     return ipv4_send(dst_ip, IP_PROTO_UDP, buffer, total);
 }
 
@@ -87,14 +70,6 @@ void udp_handle_packet(uint32_t src_ip, const uint8_t *payload, uint16_t len) {
     const struct udp_header *udp = (const struct udp_header *)payload;
     uint16_t dst_port = ntohs(udp->dst_port);
     uint16_t src_port = ntohs(udp->src_port);
-    /* TEMP-DEBUG */
-    serial_puts("[UDP] rx sport=");
-    serial_puthex(src_port);
-    serial_puts(" dport=");
-    serial_puthex(dst_port);
-    serial_puts(" len=");
-    serial_puthex(len);
-    serial_puts("\n");
     uint16_t udp_len  = ntohs(udp->length);
     if (udp_len > len || udp_len < sizeof(struct udp_header)) return;
 

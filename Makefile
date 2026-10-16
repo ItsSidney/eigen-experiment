@@ -139,6 +139,10 @@ initramfs_root/bin/shmtest: src/user/shmtest/main.c
 	@mkdir -p initramfs_root/bin
 	$(MUSL_GCC) -static -O2 -Wall -o $@ $<
 
+initramfs_root/bin/sndtest: src/user/sndtest/main.c
+	@mkdir -p initramfs_root/bin
+	$(MUSL_GCC) -static -O2 -Wall -o $@ $< -lm
+
 # ffitest: exercises the real libffi (vendored in third_party/) with the
 # exact dispatch pattern libwayland uses — pointer + sint32 + uint32 +
 # pointer args through ffi_prep_cif/ffi_call.
@@ -334,7 +338,33 @@ basisui-test:
 	@printf 'v\033\033' | PATH="/tmp/empty-bin:$$PATH" /tmp/basisui >/tmp/bui2.txt 2>&1; echo "  validate-quit rc=$$?"
 	@printf '?\033' | /tmp/basisui >/tmp/bui3.txt 2>&1; echo "  help-quit rc=$$?"
 
-iso_root/boot/initramfs.tar: initramfs_root/bin/init initramfs_root/bin/crashme initramfs_root/bin/fbtest initramfs_root/bin/shmtest initramfs_root/bin/ffitest initramfs_root/bin/wltest initramfs_root/bin/compositor initramfs_root/bin/wlclient initramfs_root/usr/basisd/sbin/basis-core initramfs_root/usr/basisd/sbin/basis-svcmgr initramfs_root/usr/basisd/bin/basisctl initramfs_root/usr/basisd/bin/basis-log initramfs_root/usr/basisd/bin/basis-ntpsync initramfs_root/bin/lattice initramfs_root/bin/eigen-recovery initramfs_root/bin/basisui $(shell find initramfs_root -type f 2>/dev/null)
+# ── fastfetch (system info; static musl, all optional deps off) ────────
+# Built once via cmake into tools/fastfetch-2.43.0/build-eigen; the binary
+# is copied into the initramfs. Re-run the cmake configure in that dir if
+# you change options (see FF_FLAGS below).
+FF_DIR   = tools/fastfetch-2.43.0
+FF_BUILD = $(FF_DIR)/build-eigen
+FF_FLAGS = -DCMAKE_C_COMPILER=$(abspath $(MUSL_GCC)) \
+           -DCMAKE_C_IMPLICIT_INCLUDE_DIRECTORIES="$(abspath toolchain/musl/include);/usr/lib/gcc/x86_64-pc-linux-gnu/15/include" \
+           -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF \
+           -DENABLE_VULKAN=OFF -DENABLE_WAYLAND=OFF -DENABLE_XCB_RANDR=OFF \
+           -DENABLE_XRANDR=OFF -DENABLE_DRM=OFF -DENABLE_DRM_AMDGPU=OFF \
+           -DENABLE_GIO=OFF -DENABLE_DCONF=OFF -DENABLE_DBUS=OFF \
+           -DENABLE_XFCONF=OFF -DENABLE_SQLITE3=OFF -DENABLE_RPM=OFF \
+           -DENABLE_IMAGEMAGICK7=OFF -DENABLE_IMAGEMAGICK6=OFF \
+           -DENABLE_CHAFA=OFF -DENABLE_ZLIB=OFF -DENABLE_EGL=OFF \
+           -DENABLE_GLX=OFF -DENABLE_OPENCL=OFF -DENABLE_ELF=OFF \
+           -DENABLE_PULSE=OFF -DCMAKE_C_FLAGS="-static" \
+           -DCMAKE_EXE_LINKER_FLAGS="-static"
+initramfs_root/bin/fastfetch: $(FF_BUILD)/fastfetch
+	@mkdir -p initramfs_root/bin
+	@cp $< $@
+$(FF_BUILD)/fastfetch:
+	cmake --build $(FF_BUILD) -j$(shell nproc) || \
+	    (cmake -S $(FF_DIR) -B $(FF_BUILD) $(FF_FLAGS) && \
+	     cmake --build $(FF_BUILD) -j$(shell nproc))
+
+iso_root/boot/initramfs.tar: initramfs_root/bin/init initramfs_root/bin/crashme initramfs_root/bin/fbtest initramfs_root/bin/shmtest initramfs_root/bin/sndtest initramfs_root/bin/ffitest initramfs_root/bin/wltest initramfs_root/bin/compositor initramfs_root/bin/wlclient initramfs_root/usr/basisd/sbin/basis-core initramfs_root/usr/basisd/sbin/basis-svcmgr initramfs_root/usr/basisd/bin/basisctl initramfs_root/usr/basisd/bin/basis-log initramfs_root/usr/basisd/bin/basis-ntpsync initramfs_root/bin/lattice initramfs_root/bin/eigen-recovery initramfs_root/bin/basisui initramfs_root/bin/fastfetch $(shell find initramfs_root -type f 2>/dev/null)
 	@mkdir -p iso_root/boot
 	tar --format=ustar -cf $@ -C initramfs_root .
 

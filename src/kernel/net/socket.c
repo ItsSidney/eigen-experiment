@@ -50,12 +50,6 @@ void icmp_deliver_to_raw(uint32_t src_ip, const void *data, uint16_t len) {
 static void sock_udp_callback(uint32_t src_ip, uint16_t src_port,
                               uint16_t dst_port, const uint8_t *data,
                               uint16_t len) {
-    /* TEMP-DEBUG */
-    serial_puts("[UDP] rx sport=");
-    serial_puthex(src_port);
-    serial_puts(" dport=");
-    serial_puthex(dst_port);
-    serial_puts("\n");
     /* Deliver to the socket that owns this destination port. Each DGRAM
      * socket registers its own binding with the UDP layer, so the port is
      * exactly the demux key; falling back to "first socket" would hand NTP
@@ -499,7 +493,36 @@ int sys_sock_bind(int fd, const struct sockaddr_un *addr, uint32_t addrlen) {
     int idx = sock_idx(fd);
     if (idx < 0) return -9; /* -EBADF */
     struct socket_entry *sock = &sockets[idx];
-    if (!sock->is_unix) return 0;
+    if (!sock->is_unix) {
+        /* AF_INET bind: claim local_port and move the UDP demux binding
+         * (creation only holds a provisional ephemeral one). struct
+         * sockaddr_in: family u16 @0, port BE @2, addr @4. */
+        const uint8_t *b = (const uint8_t *)addr;
+        uint16_t port;
+        if (addrlen < 8) return -22;
+        if (b[0] != 2 || b[1] != 0) return -97; /* AF_INET only */
+        port = (uint16_t)((uint16_t)b[2] << 8 | b[3]);
+        if (port == 0) {
+            /* bind(0): fresh ephemeral, like creation */
+            port = ephemeral_port++;
+            if (ephemeral_port > 65000) ephemeral_port = 50000;
+        } else {
+            for (int i = 0; i < MAX_KERNEL_SOCKETS; i++) {
+                if (i == idx || !sockets[i].active || sockets[i].is_unix ||
+                    sockets[i].is_icmp || sockets[i].local_port == 0)
+                    continue;
+                if (sockets[i].local_port == port)
+                    return -98; /* -EADDRINUSE */
+            }
+        }
+        if (sock->type == SOCK_DGRAM && !sock->is_icmp) {
+            if (sock->local_port)
+                udp_unbind_handler(sock->local_port);
+            udp_bind_handler(port, sock_udp_callback);
+        }
+        sock->local_port = port;
+        return 0;
+    }
     if (sock->type != SOCK_STREAM && sock->type != SOCK_DGRAM) return -94;
     if (sock->unix_bound) return -22; /* -EINVAL: already bound */
     char path[UNIX_PATH_MAX];

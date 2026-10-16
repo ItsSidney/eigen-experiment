@@ -901,6 +901,66 @@ static int64_t syscall_dispatch_impl(uint64_t num, uint64_t a1, uint64_t a2, uin
         case SYS_FSTAT:
             return (int64_t)vfs_fstat((int)a1, (struct vfs_stat *)a2);
 
+        case SYS_STATFS:
+            return (int64_t)vfs_statfs((const char *)a1,
+                                       (struct vfs_statfs *)a2);
+
+        case SYS_FSTATFS:
+            return (int64_t)vfs_fstatfs((int)a1,
+                                        (struct vfs_statfs *)a2);
+
+        case SYS_STATX: {
+            /* struct statx (x86_64 Linux layout); mask bits per statx(2).
+             * Supports AT_FDCWD + absolute paths (like openat) and
+             * AT_EMPTY_PATH (fstat). dirfd-relative and BTIME unsupported. */
+            struct kstatx_ts { int64_t tv_sec; uint32_t tv_nsec; int32_t __r; };
+            struct kstatx {
+                uint32_t stx_mask, stx_blksize;
+                uint64_t stx_attributes;
+                uint32_t stx_nlink, stx_uid, stx_gid;
+                uint16_t stx_mode, __sp0[1];
+                uint64_t stx_ino, stx_size, stx_blocks, stx_attributes_mask;
+                struct kstatx_ts stx_atime, stx_btime, stx_ctime, stx_mtime;
+                uint32_t stx_rdev_major, stx_rdev_minor;
+                uint32_t stx_dev_major, stx_dev_minor;
+                uint64_t stx_mnt_id, __sp2, __sp3[12];
+            };
+            int dfd = (int)a1;
+            const char *path = (const char *)a2;
+            int flags = (int)a3;
+            /* unsigned mask = (unsigned)a4; (honored below via what we fill) */
+            struct kstatx *sx = (struct kstatx *)a5;
+            struct vfs_stat vs;
+            int r;
+            uint8_t *z;
+            size_t zi;
+            if (!sx) return -14; /* -EFAULT */
+            /* SYNC-type and unknown flag bits: accepted, ignored. */
+            if (flags & 0x1000) { /* AT_EMPTY_PATH: stat the fd itself */
+                if (!path || path[0] != '\0') return -22;
+                r = vfs_fstat(dfd, &vs);
+            } else {
+                int nofollow = (flags & 0x100) != 0; /* AT_SYMLINK_NOFOLLOW */
+                if (!path) return -14;
+                if (dfd != -100 && path[0] != '/') return -9; /* -EBADF */
+                r = nofollow ? vfs_lstat(path, &vs) : vfs_stat(path, &vs);
+            }
+            if (r != 0) return (int64_t)r;
+            z = (uint8_t *)sx;
+            for (zi = 0; zi < sizeof(struct kstatx); zi++) z[zi] = 0;
+            sx->stx_mask = 0x717; /* TYPE|MODE|NLINK|UID|GID|INO|SIZE|BLOCKS */
+            sx->stx_blksize = (uint32_t)vs.st_blksize;
+            sx->stx_nlink = (uint32_t)vs.st_nlink;
+            sx->stx_uid = vs.st_uid;
+            sx->stx_gid = vs.st_gid;
+            sx->stx_mode = (uint16_t)vs.st_mode;
+            sx->stx_ino = vs.st_ino;
+            sx->stx_size = (uint64_t)vs.st_size;
+            sx->stx_blocks = (uint64_t)vs.st_blocks;
+            sx->stx_dev_minor = (uint32_t)vs.st_dev;
+            return 0;
+        }
+
         case SYS_LSEEK:
             return vfs_lseek((int)a1, (int64_t)a2, (int)a3);
 
@@ -1014,6 +1074,16 @@ static int64_t syscall_dispatch_impl(uint64_t num, uint64_t a1, uint64_t a2, uin
                     }
                 }
             }
+            /* Check if the target node provides its own ioctl hook (e.g. sound dsp/mixer) */
+            {
+                struct vfs_node *vnode = vfs_get_node((int)a1);
+                if (vnode && vnode->ioctl) {
+                    int64_t ir = vnode->ioctl(vnode, cmd, (void *)a3);
+                    if (ir != -25)
+                        return ir;
+                }
+            }
+
             /* Framebuffer ioctls route to the fb0 driver regardless of the
              * fd used to issue them. Handy for the console, harmless for a
              * compositor. */
@@ -1079,8 +1149,10 @@ static int64_t syscall_dispatch_impl(uint64_t num, uint64_t a1, uint64_t a2, uin
                     if (current_process && a3) current_process->pgid = *(uint32_t *)a3;
                     return 0;
                 /* ── network interface ioctls (ifconfig/route/ip) ───────
-                 * ifreq at arg: name[16], then a 16-byte union. Only
-                 * eth0 (the e1000/pcnet NIC) and lo exist. */
+                 * Linux x86_64 ABI: sizeof(struct ifreq) is 40 bytes:
+                 *   ifr_name[16] @ 0..15
+                 *   ifr_ifru (union sockaddr etc.) @ 16..39
+                 * Only eth0 (the e1000/pcnet NIC) and lo exist. */
                 case 0x8912: { /* SIOCGIFCONF: list interfaces */
                     int *lenp = (int *)a3;
                     char *buf;
@@ -1088,41 +1160,41 @@ static int64_t syscall_dispatch_impl(uint64_t num, uint64_t a1, uint64_t a2, uin
                     int off = 0;
                     if (!lenp) return -14;
                     len = *lenp;
-                    /* struct ifconf: int len @0, padding, char *buf @8 */
+                    /* struct ifconf: int len @0, 4-byte padding, char *buf @8 */
                     buf = *(char **)((uint8_t *)a3 + 8);
-                    /* eth0 entry */
-                    if (buf && len >= off + 32) {
+                    if (!buf) {
+                        *lenp = 80; /* 2 * 40 bytes */
+                        return 0;
+                    }
+                    /* eth0 entry: 40 bytes (sizeof struct ifreq) */
+                    if (len >= off + 40) {
                         int i;
-                        for (i = 0; i < 16; i++)
-                            buf[off + i] = (i < 4) ? "eth0"[i] : '\0';
+                        for (i = 0; i < 40; i++) buf[off + i] = 0;
+                        for (i = 0; i < 4; i++) buf[off + i] = "eth0"[i];
                         buf[off + 16] = 2; buf[off + 17] = 0; /* AF_INET */
-                        for (i = 0; i < 14; i++) buf[off + 18 + i] = 0;
                         {
                             uint8_t *ip = (uint8_t *)&g_netif.ip;
                             for (i = 0; i < 4; i++) buf[off + 20 + i] = ip[i];
                         }
-                        off += 32;
-                    } else if (!buf) {
-                        off = 64;
+                        off += 40;
                     }
-                    /* lo entry */
-                    if (buf && len >= off + 32) {
+                    /* lo entry: 40 bytes */
+                    if (len >= off + 40) {
                         int i;
-                        for (i = 0; i < 16; i++)
-                            buf[off + i] = (i < 2) ? "lo"[i] : '\0';
-                        buf[off + 16] = 2; buf[off + 17] = 0;
-                        for (i = 0; i < 14; i++) buf[off + 18 + i] = 0;
+                        for (i = 0; i < 40; i++) buf[off + i] = 0;
+                        for (i = 0; i < 2; i++) buf[off + i] = "lo"[i];
+                        buf[off + 16] = 2; buf[off + 17] = 0; /* AF_INET */
                         buf[off + 20] = 127; buf[off + 21] = 0;
                         buf[off + 22] = 0; buf[off + 23] = 1;
-                        off += 32;
-                    } else if (!buf) {
-                        off = 64;
+                        off += 40;
                     }
                     *lenp = off;
                     return 0;
                 }
                 case 0x8913: /* SIOCGIFFLAGS */
+                case 0x8914: /* SIOCSIFFLAGS */
                 case 0x8915: /* SIOCGIFADDR */
+                case 0x8919: /* SIOCGIFBRDADDR */
                 case 0x891B: /* SIOCGIFNETMASK */
                 case 0x8921: /* SIOCGIFMTU */
                 case 0x8927: { /* SIOCGIFHWADDR */
@@ -1140,6 +1212,9 @@ static int64_t syscall_dispatch_impl(uint64_t num, uint64_t a1, uint64_t a2, uin
                              name[2] == '\0')
                         is_lo = 1;
                     if (!is_eth && !is_lo) return -19; /* -ENODEV */
+                    if (cmd == 0x8914) { /* SIOCSIFFLAGS: acknowledge interface state changes */
+                        return 0;
+                    }
                     if (cmd == 0x8913) { /* flags */
                         int *f = (int *)(ifr + 16);
                         /* UP|BROADCAST|RUNNING|MULTICAST, lo: UP|LOOPBACK|RUNNING */
@@ -1161,12 +1236,14 @@ static int64_t syscall_dispatch_impl(uint64_t num, uint64_t a1, uint64_t a2, uin
                         }
                         return 0;
                     }
-                    /* ADDR / NETMASK: AF_INET + 4 address bytes */
+                    /* ADDR / NETMASK / BRDADDR: AF_INET + 4 address bytes */
                     ifr[16] = 2; ifr[17] = 0;
                     {
                         uint32_t v = 0;
                         if (cmd == 0x8915)
                             v = is_lo ? 0x0100007FUL : g_netif.ip;
+                        else if (cmd == 0x8919)
+                            v = is_lo ? 0 : ((g_netif.ip & g_netif.netmask) | ~g_netif.netmask);
                         else
                             v = is_lo ? 0x000000FFUL : g_netif.netmask;
                         {
@@ -1713,6 +1790,7 @@ static int64_t syscall_dispatch_impl(uint64_t num, uint64_t a1, uint64_t a2, uin
              * passes, or a signal needs delivering. Sleeps beat spinning. */
             uint64_t waited = 0;
             for (;;) {
+                net_poll();
                 ready = 0;
                 for (int i = 0; i < nfds; i++) {
                     fds[i].revents = 0;
@@ -1767,13 +1845,16 @@ static int64_t syscall_dispatch_impl(uint64_t num, uint64_t a1, uint64_t a2, uin
             }
             uint64_t waited = 0;
             for (;;) {
+                net_poll();
                 int count = 0;
                 for (int i = 0; i < nfds && i < 1024; i++) {
                     int bit = (i >> 6) & 15, m = 1 << (i & 63);
                     int inr = rset && (rset->bits[bit] & (uint64_t)m);
                     int inw = wset && (wset->bits[bit] & (uint64_t)m);
                     int want = (inr ? 0x001 : 0) | (inw ? 0x004 : 0);
-                    int r = want ? vfs_poll(i, want) : 0;
+                    int r = 0;
+                    if (is_socket_fd(i)) r = sys_sock_poll(i, want);
+                    else r = want ? vfs_poll(i, want) : 0;
                     if (inr && !(r & 0x001)) rset->bits[bit] &= ~(uint64_t)m;
                     else if (inr) count++;
                     if (inw && !(r & 0x004)) wset->bits[bit] &= ~(uint64_t)m;
@@ -1804,13 +1885,16 @@ static int64_t syscall_dispatch_impl(uint64_t num, uint64_t a1, uint64_t a2, uin
             if (nfds < 0) return -22; /* -EINVAL */
             if (nfds > 1024) nfds = 1024;
             for (;;) {
+                net_poll();
                 int count = 0;
                 for (int i = 0; i < nfds && i < 1024; i++) {
                     int bit = (i >> 6) & 15, m = 1 << (i & 63);
                     int inr = rset && (rset->bits[bit] & (uint64_t)m);
                     int inw = wset && (wset->bits[bit] & (uint64_t)m);
                     int want = (inr ? 0x001 : 0) | (inw ? 0x004 : 0);
-                    int r = want ? vfs_poll(i, want) : 0;
+                    int r = 0;
+                    if (is_socket_fd(i)) r = sys_sock_poll(i, want);
+                    else r = want ? vfs_poll(i, want) : 0;
                     if (inr && !(r & 0x001)) rset->bits[bit] &= ~(uint64_t)m;
                     else if (inr) count++;
                     if (inw && !(r & 0x004)) wset->bits[bit] &= ~(uint64_t)m;
